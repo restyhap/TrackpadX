@@ -10,16 +10,12 @@ final class TouchpadBlockerService {
     private var runLoopSource: CFRunLoopSource?
     private var imeMonitor: Any?
 
-    /// 待丢弃处理的键鼠事件类型
+    /// 屏蔽窗口内丢弃的误触事件类型：仅光标移动与滚动（误触的两种直接表现）。
+    /// 注意不放行被吞的按压/拖拽之外的取舍：按下(leftMouseDown)与拖拽(dragged)一旦吞掉，
+    /// 窗口拖动等合法操作会整体失效（拖窗 = Down→Dragged 序列），故放行。
     private static let blockingMask: CGEventMask =
         (1 << CGEventType.mouseMoved.rawValue) |
-        (1 << CGEventType.scrollWheel.rawValue) |
-        (1 << CGEventType.leftMouseDown.rawValue) |
-        (1 << CGEventType.rightMouseDown.rawValue) |
-        (1 << CGEventType.otherMouseDown.rawValue) |
-        (1 << CGEventType.leftMouseDragged.rawValue) |
-        (1 << CGEventType.rightMouseDragged.rawValue) |
-        (1 << CGEventType.otherMouseDragged.rawValue)
+        (1 << CGEventType.scrollWheel.rawValue)
 
     /// 打字监测事件类型
     private static let typingMask: CGEventMask =
@@ -80,7 +76,7 @@ final class TouchpadBlockerService {
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    /// tap 回调：打字类事件记录时间，鼠标/滚轮类在屏蔽窗口内返回 nil 丢弃
+    /// tap 回调：打字类事件记录时间，光标移动/滚轮在屏蔽窗口内返回 nil 丢弃
     func handle(event: CGEvent, type: CGEventType) -> CGEvent? {
         // 系统因超时禁用 tap，需要恢复
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {

@@ -12,6 +12,7 @@ enum Store {
         case fullscreenFallback = "feature.threefinger.fullscreenFallback" // 0=不动作 1=隐藏App
         case autoStart = "general.autostart"
         case closeAction = "general.closeAction" // 0=直接退出（默认） 1=后台运行
+        case dockVisible = "general.dockVisible" // Dock 图标显示开关（默认显示）
     }
 
     static var blockerEnabled: Bool {
@@ -44,6 +45,12 @@ enum Store {
     static var closeAction: Int {
         get { suite.object(forKey: Key.closeAction.rawValue) as? Int ?? 0 }
         set { suite.set(newValue, forKey: Key.closeAction.rawValue) }
+    }
+
+    /// Dock 栏图标显示（true=显示默认；false=运行时切 accessory 隐藏，重新打开 app 仍可唤回设置窗）
+    static var dockVisible: Bool {
+        get { suite.object(forKey: Key.dockVisible.rawValue) as? Bool ?? true }
+        set { suite.set(newValue, forKey: Key.dockVisible.rawValue) }
     }
 
     static func observeDefaults(_ handler: @escaping () -> Void) -> NSObjectProtocol {

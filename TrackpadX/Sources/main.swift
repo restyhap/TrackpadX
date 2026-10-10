@@ -7,5 +7,5 @@ let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 NSLog("[TrackpadX] main: delegate wired")
-app.setActivationPolicy(.regular)
+app.setActivationPolicy(Store.dockVisible ? .regular : .accessory)
 app.run()

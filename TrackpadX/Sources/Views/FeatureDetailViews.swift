@@ -130,6 +130,14 @@ final class GeneralViewController: DetailViewController {
         stack.addArrangedSubview(row("点击关闭按钮时", closePopup))
         stack.addArrangedSubview(caption("「直接退出」关闭窗口即退出应用；「退出到后台运行」仅收起窗口，功能继续生效，点击 Dock 图标可重新打开设置。"))
 
+        // Dock 栏图标显示/隐藏（运行时切换激活策略，即时生效）
+        let dockSwitch = NSSwitch()
+        dockSwitch.state = Store.dockVisible ? .on : .off
+        dockSwitch.target = self
+        dockSwitch.action = #selector(dockVisibilityToggled(_:))
+        stack.addArrangedSubview(row("在 Dock 栏显示图标", dockSwitch))
+        stack.addArrangedSubview(caption("隐藏后即时生效且功能继续。设置窗口已关闭时，可从启动台 / Spotlight 重新打开应用唤回设置窗。"))
+
         // 权限状态（提示类内容置底）
         stack.addArrangedSubview(sectionLabel("权限状态"))
         threePermRow.orientation = .horizontal
@@ -207,6 +215,14 @@ final class GeneralViewController: DetailViewController {
         }
     }
 
+    /// 切换 Dock 图标显示：.regular 显示 / .accessory 隐藏（即时生效，无需重启）
+    @objc private func dockVisibilityToggled(_ sender: NSSwitch) {
+        let visible = sender.state == .on
+        Store.dockVisible = visible
+        NSApp.setActivationPolicy(visible ? .regular : .accessory)
+        NSLog("[TrackpadX] Dock 图标切换为 %@", visible ? "显示" : "隐藏")
+    }
+
     private func applyAutoStart(_ enabled: Bool) {
         if enabled {
             do {
@@ -247,7 +263,7 @@ final class BlockerViewController: DetailViewController {
         switchControl.target = self
         switchControl.action = #selector(enabledToggled(_:))
         stack.addArrangedSubview(row("启用功能", switchControl))
-        stack.addArrangedSubview(caption("打字后的一小段时间内，丢弃触摸板鼠标点击与滚动事件，避免打字时手掌误触。"))
+        stack.addArrangedSubview(caption("打字后的一小段时间内，忽略触控板引起的鼠标位移与滚动，避免打字时手掌误触。点击与拖拽不受影响（拖动窗口、文件等正常工作）。"))
 
         let popup = NSPopUpButton()
         let options: [(Double, String)] = [
