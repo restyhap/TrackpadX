@@ -19,6 +19,8 @@ final class SettingsWindowController: NSWindowController {
             defer: false)
         window.title = "触摸板扩展"
         window.isReleasedWhenClosed = false
+        // 关闭窗口状态恢复：避免系统重启后经恢复机制自动弹出设置窗口
+        window.isRestorable = false
         super.init(window: window)
         buildContent()
         selectItem(0)

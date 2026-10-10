@@ -6,28 +6,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("[TrackpadX] 1 didFinishLaunching 开始")
-        NSApp.setActivationPolicy(.regular)
-        NSLog("[TrackpadX] 2 policy set")
+        NSApp.setActivationPolicy(Store.dockVisible ? .regular : .accessory)
+        NSLog("[TrackpadX] 2 policy set (dockVisible=%@)", Store.dockVisible ? "true" : "false")
         installMainMenu()
         NSLog("[TrackpadX] 3 menu installed, ms=\(Int(CACurrentMediaTime()*1000))")
         FeatureRegistry.shared.start()
         NSLog("[TrackpadX] 4 registry started, ms=\(Int(CACurrentMediaTime()*1000))")
 
+        // 系统会在注销/重启时自动恢复"重启前在运行"的 app（relaunch on login）。
+        // 本 app 经 SMAppService 登录项启动，官方建议禁用该恢复机制避免双通道拉起窗口（AppKit 头文件建议）。
+        NSApp.disableRelaunchOnLogin()
+
+        let isLoginLaunch = Self.isLaunchedAsLoginItem(notification: notification)
+        NSLog("[TrackpadX] 4.5 登录启动检测: \(isLoginLaunch)")
+
         // 窗口构建段整体包裹 ObjC 异常捕获（AppKit 会吞 delegate 回调里的异常导致静默截断）
         txCatchObjCException({
             let controller = SettingsWindowController()
             self.windowController = controller
-            controller.window?.center()
-            controller.window?.makeKeyAndOrderFront(nil)
-            controller.showWindow(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            let f = controller.window?.frame ?? .zero
-            NSLog("[TrackpadX] 6 window frame=\(f) visible=\(controller.window?.isVisible ?? false) count=\(NSApp.windows.count)")
+            if isLoginLaunch {
+                // 开机/登录自启：后台静默运行，不显示窗口也不抢占焦点；
+                // 用户点 Dock 图标或从启动台/Spotlight 重新打开时经 handleReopen 唤回设置窗。
+                NSLog("[TrackpadX] 6 登录启动: 后台静默, 不显示窗口")
+            } else {
+                controller.window?.center()
+                controller.window?.makeKeyAndOrderFront(nil)
+                controller.showWindow(nil)
+                NSApp.activate(ignoringOtherApps: true)
+                let f = controller.window?.frame ?? .zero
+                NSLog("[TrackpadX] 6 window frame=\(f) visible=\(controller.window?.isVisible ?? false) count=\(NSApp.windows.count)")
+            }
             installCloseHandler(for: controller.window)
         }) { ex in
             NSLog("[TrackpadX] ❌ 窗口构建异常: \(ex.name.rawValue) - \(String(describing: ex.reason)) userInfo=\(String(describing: ex.userInfo))")
         }
         NSLog("[TrackpadX] 7 启动完成")
+    }
+
+    /// 登录项启动检测：
+    /// ① 主信号——SMAppService 登录项启动会下发 kAEOpenApplication Apple Event，
+    ///    且 propData 参数为 keyAELaunchedAsLogInItem（'lgin'）；
+    /// ② 次级信号——NSApplicationDidFinishLaunchingNotification userInfo 中
+    ///    NSApplicationLaunchIsDefaultLaunchKey = false（app 头文件注释：登录项启动等非默认启动时为 NO）。
+    private static func isLaunchedAsLoginItem(notification: Notification) -> Bool {
+        if let event = NSAppleEventManager.shared().currentAppleEvent,
+           event.eventID == kAEOpenApplication,
+           event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem {
+            return true
+        }
+        if let flag = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? NSNumber {
+            return !flag.boolValue
+        }
+        return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
