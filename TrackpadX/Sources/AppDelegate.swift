@@ -43,19 +43,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("[TrackpadX] 7 启动完成")
     }
 
-    /// 登录项启动检测：
-    /// ① 主信号——SMAppService 登录项启动会下发 kAEOpenApplication Apple Event，
-    ///    且 propData 参数为 keyAELaunchedAsLogInItem（'lgin'）；
-    /// ② 次级信号——NSApplicationDidFinishLaunchingNotification userInfo 中
-    ///    NSApplicationLaunchIsDefaultLaunchKey = false（app 头文件注释：登录项启动等非默认启动时为 NO）。
+    /// 登录项启动检测（仅用精确信号）：
+    /// SMAppService 登录项启动会下发 kAEOpenApplication Apple Event，
+    /// 且 propData 参数为 keyAELaunchedAsLogInItem（'lgin'）。
+    /// 不用 NSApplication.launchIsDefaultUserInfoKey 做次级信号——实测有误伤：
+    /// AppKit 头文件注明"app 带有待恢复的窗口状态"时该值也为 false（崩溃/被杀残留同理），
+    /// 会把手动启动误判为登录启动导致不弹窗（v0.2.3 实机日志证据）。系统恢复路径由 disableRelaunchOnLogin 兜住。
     private static func isLaunchedAsLoginItem(notification: Notification) -> Bool {
         if let event = NSAppleEventManager.shared().currentAppleEvent,
            event.eventID == kAEOpenApplication,
            event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem {
+            NSLog("[TrackpadX] 登录启动信号命中: AppleEvent 'lgin'")
             return true
-        }
-        if let flag = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? NSNumber {
-            return !flag.boolValue
         }
         return false
     }
