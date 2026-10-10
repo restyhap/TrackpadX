@@ -1,0 +1,6 @@
+# 构建产物与本地临时
+.DS_Store
+TrackpadX/build/
+TrackpadX/dist/
+TrackpadX/app/
+*.dmg
