@@ -15,6 +15,8 @@ final class MinimizeWindowService {
     private static let focusedWindow = kAXFocusedWindowAttribute as CFString
     private static let mainWindow = kAXMainWindowAttribute as CFString
     private static let windowsList = kAXWindowsAttribute as CFString
+    /// 窗口全屏状态（Swift 模块内未桥接，显式定义）
+    private static let fullscreenFlag = "AXFullScreen" as CFString
 
     private init() {}
 
@@ -57,6 +59,16 @@ final class MinimizeWindowService {
             return
         }
 
+        // 全屏聚焦窗口提前分流：AX 动作层/属性层均会失败，而合成 ⌘M 会落在
+        // 无可执行菜单项的 app 上触发系统提示音（用户实测"响一声"）。
+        // 直接按用户设置的降级策略处理（不动作 / 隐藏前台应用）
+        var fsValue: CFTypeRef?
+        let fs = AXUIElementCopyAttributeValue(target, Self.fullscreenFlag, &fsValue)
+        if fs == .success, (fsValue as? NSNumber)?.boolValue == true {
+            degrade(app: app, reason: "全屏聚焦窗口无法最小化")
+            return
+        }
+
         // 取证: 目标窗口的角色/动作清单, 便于诊断 err=-25205 (ActionUnsupported)
         var role: CFTypeRef?
         AXUIElementCopyAttributeValue(target, kAXRoleAttribute as CFString, &role)
@@ -79,7 +91,7 @@ final class MinimizeWindowService {
         }
         // 属性层也不稳定（ Electron/Tauri 系 AX 桥异步、置位成功但未应用）
         // → 键盘层兜底：向前台合成 ⌘M（最小化快捷键），直发版无沙盒可行
-        if tryKeyboardMinimize() {
+        if tryKeyboardMinimize(pid: app.processIdentifier) {
             NSLog("[TrackpadX] 已通过合成 ⌘M 最小化 %@（AX 双层均未应用）", app.localizedName ?? "?")
             return
         }
@@ -122,16 +134,37 @@ final class MinimizeWindowService {
     // MARK: - 键盘层兜底（合成 ⌘M）
 
     /// AX 双层都不通时，向前台发最小化快捷键（需要辅助功能权限，直发无沙盒可行）
-    private func tryKeyboardMinimize() -> Bool {
-        // 46 = kVK_ANSI_M
+    /// 必须验证生效：部分 app 无可执行的"最小化"菜单项，无效 ⌘M 会触发系统提示音，
+    /// 此前无条件返回 true 会吞掉后续降级动作（"隐藏前台应用"从未被执行）
+    private func tryKeyboardMinimize(pid: pid_t) -> Bool {
         guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 46, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: 46, keyDown: false)
         else { return false }
+        let before = visibleWindowNumbers(pid)
         down.flags = [.maskCommand]
         up.flags = [.maskCommand]
         down.post(tap: .cgSessionEventTap)
         usleep(30_000)
         up.post(tap: .cgSessionEventTap)
+        // 给 Dock 最小化动画留时间，再看目标进程是否有窗口从屏上消失
+        usleep(150_000)
+        let removed = visibleWindowNumbers(pid).subtracting(before)
+        if removed.isEmpty {
+            NSLog("[TrackpadX] 合成 ⌘M 后无窗口消失（无可执行菜单项，伴系统提示音），转入降级")
+            return false
+        }
         return true
+    }
+
+    /// 目标进程当前在屏幕上的窗口号集合（CGWindow 公开 API，验证最小化是否实际生效）
+    private func visibleWindowNumbers(_ pid: pid_t) -> Set<Int> {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        var out = Set<Int>()
+        for w in list where (w["kCGWindowOwnerPID"] as? Int32) == pid {
+            if let n = w["kCGWindowNumber"] as? Int { out.insert(n) }
+        }
+        return out
     }
 }
