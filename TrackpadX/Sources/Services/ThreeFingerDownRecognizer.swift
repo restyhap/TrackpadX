@@ -27,12 +27,27 @@ final class ThreeFingerDownRecognizer {
     private var lastFired: Date = .distantPast
 
     static let cooldown: TimeInterval = 0.6
-    /// 单指真实下滑的最小竖直位移（归一化单位，逐指绝对阈值）
+    /// 单指真实下滑的最小竖直位移（严格路径 A：逐指绝对阈值）
     static let perFingerThresholdY: CGFloat = 0.08
-    /// 三指位移一致性约束：位移标准差 / 平均位移 ≤ 该比例（要求三指"整齐下滑"）
+    /// 二指主导路径 B：主拉手指的最小竖直位移（第三指允许静止/微小位移）
+    static let mainFingerThresholdY: CGFloat = 0.15
+    /// 三指位移一致性约束（路径 A）：位移标准差 / 平均位移 ≤ 该比例
     static let maxDisparity: CGFloat = 0.55
     /// 质心水平位移超过竖直位移的该比例时视为非下滑
     static let maxXRatio: CGFloat = 0.6
+    /// 手动滚动后的隔离期：期间的三指接触视为"滚动+误触"，不触发
+    static let scrollQuarantine: TimeInterval = 0.35
+
+    /// 近期手动滚动有效期（时间戳之后的接触不算手势）
+    private var userScrolledUntil: Date = .distantPast
+
+    /// 滚动污染信号：手动滚动（phase != none）出现后的一段隔离期内，三指接触都视为
+    /// "滚动 + 第三指误触"，不算手势触发。momentum（惯性尾，phase==none）不算手动滚动。
+    func recordScroll(phase: NSEvent.Phase) {
+        if phase != [] {
+            userScrolledUntil = Date().addingTimeInterval(Self.scrollQuarantine)
+        }
+    }
 
     func update(with touches: Set<NSTouch>) {
         var next: [String: Finger] = [:]
@@ -76,14 +91,20 @@ final class ThreeFingerDownRecognizer {
         }
     }
 
-    /// 触发条件（三重判定，全部满足才触发）：
-    /// ① 每根手指 |dy_i| ≥ perFingerThresholdY（单指必须真实位移，静止指不达标）
-    /// ② 三指 dy_i 方向一致且同为负（向下）；静止/反向手指失败
-    /// ③ 位移一致性：dy_i 标准差 / 平均位移 ≤ maxDisparity（参差滑动的误触组合剔除）
+    /// 触发判定（三重防线）：
+    /// ① 滚动污染检查：近期有手动滚动（两指滚动页面 + 第三指误触场景）→ 不触发
+    /// ② 路径 A（严格三指）：三指全动 ≥0.08、方向一致、离散度 ≤0.55
+    /// ③ 路径 B（二指主导，容纳"两动 + 一搭"姿势）：两根主拉手指 ≥0.15 且方向一致，
+    ///    第三指 |dy| < 0.15 任意（静止亦可）
     private func evaluateEnd() {
         guard startPositions.count == 3 else { return }
         let snapshot = fingers.values.filter { startPositions[$0.identity] != nil }
         guard snapshot.count == 3 else { return }
+
+        if Date() < userScrolledUntil {
+            NSLog("[TrackpadX] 近期有手动滚动, 三指接触视为滚动+误触, 不触发")
+            return
+        }
 
         let deltas = snapshot.map { finger -> CGFloat in
             finger.position.y - (startPositions[finger.identity] ?? 0)
@@ -101,22 +122,33 @@ final class ThreeFingerDownRecognizer {
         var uniform = true
         for d in deltas {
             if abs(d) >= Self.perFingerThresholdY { movedCount += 1 }
-            if d.sign != meanDy.sign { uniform = false }  // 静止或反向手指 → 直接失败
+            if d.sign != meanDy.sign { uniform = false }  // 静止或反向手指 → 严格路径失败
         }
         let variance = deltas.reduce(0) { $0 + ($1 - meanDy) * ($1 - meanDy) } / 3
         let disparity = sqrt(max(variance, 0)) / max(abs(meanDy), 0.001)
-        NSLog("[TrackpadX] 逐指校验: deltas=%@ disparity=%.3f moved=%d",
-              deltas.map { String(format: "%.4f", Double($0)) }.joined(separator: ","),
-              Double(disparity), movedCount)
 
-        guard movedCount == 3, uniform, disparity <= Self.maxDisparity else {
-            NSLog("[TrackpadX] 非整齐三指下滑，不触发 (moved=3/3 且一致才触发)")
+        // 路径 A：严格三指
+        let strictOK = movedCount == 3 && uniform && disparity <= Self.maxDisparity
+        // 路径 B：两根主拉手指（排除最近一根），第三根允许静止
+        let sorted = deltas.sorted { abs($0) > abs($1) }
+        let mainOK = abs(sorted[0]) >= Self.mainFingerThresholdY
+            && abs(sorted[1]) >= Self.mainFingerThresholdY
+            && sorted[0].sign == sorted[1].sign
+            && sorted[1].sign == meanDy.sign
+        let thirdQuiet = abs(sorted[2]) < Self.mainFingerThresholdY
+        let twoLeadOK = mainOK && thirdQuiet
+
+        NSLog("[TrackpadX] 逐指校验: deltas=%@ disparity=%.3f moved=%d strict=\(strictOK) twoLead=\(twoLeadOK)",
+              deltas.map { String(format: "%.4f", Double($0)) }.joined(separator: ","))
+
+        guard strictOK || twoLeadOK else {
+            NSLog("[TrackpadX] 三指判定未通过（需整齐三指 或 两动+第三指搭放）")
             return
         }
 
         lastFired = Date()
         if meanDy < 0 {
-            NSLog("[TrackpadX] 触发三指下滑 (avgDy=%.4f)", Double(meanDy))
+            NSLog("[TrackpadX] 触发三指下滑 (avgDy=%.4f, \(strictOK ? "路径A整齐" : "路径B两动一搭"))", Double(meanDy))
             MinimizeWindowService.shared.performMinimize()
         } else {
             NSLog("[TrackpadX] 平均上滑 dy=%.4f，预留不触发", Double(meanDy))

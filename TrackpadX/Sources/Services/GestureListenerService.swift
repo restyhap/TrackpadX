@@ -8,13 +8,16 @@ final class GestureListenerService {
 
     /// 监听的手势事件族（gesture/begin/end + magnify/rotate/swipe 属于同一 gesture 驱动族，
     /// 覆盖 widest 的 mask 保证 NSEvent 上可取到 allTouches 的原始手势事件）
+    /// v0.2.6: 增加 scrollWheel（22）——手动滚动的持续事件流是"两指滚动+第三指误触"
+    /// 与"三指下滑"的可区分公开信号：滚动接触期间绝不触发手势。
     private static let gestureMask: CGEventMask =
         (1 << CGEventType(rawValue: 29)!.rawValue) | // NSEventTypeGesture
         (1 << CGEventType(rawValue: 30)!.rawValue) | // NSEventTypeBeginGesture
         (1 << CGEventType(rawValue: 31)!.rawValue) | // NSEventTypeEndGesture
         (1 << CGEventType(rawValue: 32)!.rawValue) | // NSEventTypeSwipe
         (1 << CGEventType(rawValue: 19)!.rawValue) | // NSEventTypeMagnify
-        (1 << CGEventType(rawValue: 21)!.rawValue)   // NSEventTypeRotate
+        (1 << CGEventType(rawValue: 21)!.rawValue) | // NSEventTypeRotate
+        (1 << CGEventType(rawValue: 22)!.rawValue)   // NSEventTypeScrollWheel
 
     private let recognizer = ThreeFingerDownRecognizer()
 
@@ -92,6 +95,11 @@ final class GestureListenerService {
             if let name = exceptionName {
                 NSLog("[TrackpadX] NSEvent 构造异常已丢弃事件 (type=%d, exception=%@)", cgEvent.type.rawValue, name as NSString)
             }
+            return
+        }
+        // 滚动事件：只用于"手动滚动污染"信号（phase != none = 主动滚动），不参与手指状态
+        if cgEvent.type.rawValue == 22 {
+            recognizer.recordScroll(phase: nsEvent.phase)
             return
         }
         let touches = nsEvent.allTouches()
